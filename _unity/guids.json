@@ -1,0 +1,17 @@
+{
+  "Assets/FolderLabeler": "bb112c71b7314e34ae5568107662bf01",
+  "Assets/FolderLabeler/Editor": "a1523ac001454727a22bf7d6cd247add",
+  "Assets/FolderLabeler/Editor/BuiltinRules.cs": "45c59f33f309484f8941495833901a04",
+  "Assets/FolderLabeler/Editor/Engine.cs": "764c09e1d2894c3c84dab6c89d221685",
+  "Assets/FolderLabeler/Editor/FileCategories.cs": "ab2c49a2266d44b1bc75066d35c3e1d1",
+  "Assets/FolderLabeler/Editor/FolderLabeler.Editor.asmdef": "e810957a248a4a4b9438eff731d59052",
+  "Assets/FolderLabeler/Editor/FolderLabelerWindow.cs": "a14d788a55454d39b3b98a03dbf622d5",
+  "Assets/FolderLabeler/Editor/FolderWalker.cs": "c6d6ac7f4b72400c9aea43bd33b9f8ac",
+  "Assets/FolderLabeler/Editor/Inference.cs": "fd5eb18411ca4ed182bf9d1c0d6fd9a9",
+  "Assets/FolderLabeler/Editor/Labels.cs": "688c5f06793b4773b8dcf6ff0f0c1158",
+  "Assets/FolderLabeler/Editor/Models.cs": "239abce5d7904b72985e7f37475f2cc2",
+  "Assets/FolderLabeler/Editor/Registry.cs": "4871b2731e524c3abfc8e795ac48b9cd",
+  "Assets/FolderLabeler/Editor/UnityPackageReader.cs": "d321ac5236ed430abc16843a580546fc",
+  "Assets/FolderLabeler/Editor/VrcSdk.cs": "a55b427cd24e4da09042ad66fa7ef3a2",
+  "Assets/FolderLabeler/package.json": "6a72fe0510874d5bb8f47736e6535999"
+}

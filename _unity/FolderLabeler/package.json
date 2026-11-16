@@ -1,0 +1,7 @@
+{
+    "name": "com.local.folder-labeler",
+    "displayName": "Folder Labeler",
+    "version": "1.0.0",
+    "unity": "2022.3",
+    "description": "Assets 内のフォルダを走査し、衣装・アバター・ツール等のラベルを信頼度と根拠つきで提案する、読み取り専用のエディター拡張。"
+}
