@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.1-preview
+// Znakisaki ColorVariant v0.2.0-preview
 // 走査結果のデータモデルと、読み取り専用の走査処理。
 // ここでは一切の書き込み（SetDirty / Undo 記録 / アセット変更）を行わない。
 using System;
@@ -12,7 +12,7 @@ namespace Znakisaki.ColorVariant
 {
     internal static class CVInfo
     {
-        public const string Version = "0.1.1-preview";
+        public const string Version = "0.2.0-preview";
         public const string DefaultOutputRoot = "Assets/Znakisaki/ColorVariant";
     }
 
@@ -42,6 +42,9 @@ namespace Znakisaki.ColorVariant
         public bool IsAsset;
         public readonly List<CVSlot> Slots = new List<CVSlot>();
         public Texture Replacement;
+        public CVBakeSettings Bake = new CVBakeSettings();
+        /// <summary>焼き付けの元になるテクスチャ（差し替え先があればそれ、なければ元テクスチャ）。</summary>
+        public Texture BakeSource => Replacement != null ? Replacement : Original;
     }
 
     internal sealed class CVScanResult

@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.1-preview
+// Znakisaki ColorVariant v0.2.0-preview
 // 複製マテリアルの生成と割り当て。
 // 元マテリアルは読み取りのみ。元アバター階層には書き込まない（アバターモードは複製へ適用）。
 using System;
@@ -246,12 +246,12 @@ namespace Znakisaki.ColorVariant
             log.Add($"[完了] マテリアル {created.Count} 件作成、スロット {plan.Entries.Count} 件割り当て（{sw.ElapsedMilliseconds} ms）。割り当ては Ctrl+Z で戻せます。作成した .mat ファイルは Undo では削除されません。");
         }
 
-        public static string UniquePath(string folder, string baseName)
+        public static string UniquePath(string folder, string baseName, string ext = ".mat")
         {
             baseName = SanitizeFile(baseName);
-            string p = $"{folder}/{baseName}.mat";
+            string p = $"{folder}/{baseName}{ext}";
             int i = 1;
-            while (Exists(p)) p = $"{folder}/{baseName}_{i++}.mat";
+            while (Exists(p)) p = $"{folder}/{baseName}_{i++}{ext}";
             return p;
         }
 

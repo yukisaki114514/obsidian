@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.1-preview
+// Znakisaki ColorVariant v0.2.0-preview
 // メインウィンドウ：Znakisaki/ColorVariant/Open Window
 using System;
 using System.Collections.Generic;
@@ -53,6 +53,22 @@ namespace Znakisaki.ColorVariant
         [NonSerialized] bool onlyAssigned;
         [NonSerialized] string search = "";
         [NonSerialized] GUIStyle sectionTitle, okStyle, warnStyle, errStyle;
+        // 焼き付け関連（プレビューは表示中の行だけ、縮小して作る）
+        [NonSerialized] readonly Dictionary<CVTextureRow, (Texture2D tex, string sig)> previews = new Dictionary<CVTextureRow, (Texture2D, string)>();
+        [NonSerialized] readonly HashSet<CVTextureRow> previewOpen = new HashSet<CVTextureRow>();
+        [NonSerialized] readonly Dictionary<CVTextureRow, Gradient> gradients = new Dictionary<CVTextureRow, Gradient>();
+        [NonSerialized] readonly Dictionary<CVTextureRow, Texture> bakedOverride = new Dictionary<CVTextureRow, Texture>();
+        const int PreviewSize = 256;
+
+        void OnDisable() => ClearPreviews();
+
+        void ClearPreviews()
+        {
+            foreach (var kv in previews) if (kv.Value.tex != null) DestroyImmediate(kv.Value.tex);
+            previews.Clear();
+        }
+
+        static bool IsBaking(CVTextureRow row) => row.Bake != null && row.Bake.HasEffect;
 
         void InitStyles()
         {
@@ -90,9 +106,15 @@ namespace Znakisaki.ColorVariant
         // 画面下に固定：集計と生成ボタン
         void DrawFooter()
         {
-            int assigned = 0, warn = 0, err = 0;
+            int assigned = 0, warn = 0, err = 0, bakes = 0;
             if (scan != null)
             {
+                foreach (var row in scan.Rows)
+                {
+                    if (!IsBaking(row)) continue;
+                    bakes++;
+                    if (!CVBake.CanBake(row.BakeSource, out _)) err++;
+                }
                 foreach (var s in scan.Slots)
                 {
                     var t = EffectiveTexture(s);
@@ -108,7 +130,7 @@ namespace Znakisaki.ColorVariant
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    GUILayout.Label($"差し替え {assigned} スロット　色 {colors.Count(c => !string.IsNullOrEmpty(c.Property))} 件", EditorStyles.boldLabel);
+                    GUILayout.Label($"差し替え {assigned} スロット　焼き付け {bakes} 枚　色 {colors.Count(c => !string.IsNullOrEmpty(c.Property))} 件", EditorStyles.boldLabel);
                     if (warn > 0) GUILayout.Label($"⚠ {warn}", warnStyle);
                     if (err > 0) GUILayout.Label($"✕ {err}（生成不可）", errStyle);
                     GUILayout.FlexibleSpace();
@@ -249,16 +271,28 @@ namespace Znakisaki.ColorVariant
         {
             // 差し替え指定は可能な範囲で引き継ぐ
             var keep = new Dictionary<string, Texture>();
+            var keepBake = new Dictionary<string, CVBakeSettings>();
             var keepSlot = new Dictionary<string, Texture>();
             if (scan != null)
             {
-                foreach (var row in scan.Rows) if (row.Replacement != null) keep[row.Key] = row.Replacement;
+                foreach (var row in scan.Rows)
+                {
+                    if (row.Replacement != null) keep[row.Key] = row.Replacement;
+                    if (row.Bake != null && row.Bake.enabled) keepBake[row.Key] = row.Bake;
+                }
                 foreach (var kv in slotOverrides) if (kv.Key.Renderer != null) keepSlot[SlotId(kv.Key)] = kv.Value;
             }
             slotOverrides.Clear();
             validateCache.Clear();
             scan = CVScanner.Scan(IncludedRenderers());
-            foreach (var row in scan.Rows) if (keep.TryGetValue(row.Key, out var t)) row.Replacement = t;
+            ClearPreviews();
+            previewOpen.Clear();
+            gradients.Clear();
+            foreach (var row in scan.Rows)
+            {
+                if (keep.TryGetValue(row.Key, out var t)) row.Replacement = t;
+                if (keepBake.TryGetValue(row.Key, out var b)) row.Bake = b;
+            }
             foreach (var s in scan.Slots) if (keepSlot.TryGetValue(SlotId(s), out var t)) slotOverrides[s] = t;
         }
 
@@ -288,7 +322,7 @@ namespace Znakisaki.ColorVariant
             if (scan.Rows.Count == 0) { EditorGUILayout.HelpBox("テクスチャが設定されたスロットがありません。", MessageType.Info); return; }
             foreach (var row in scan.Rows)
             {
-                if (onlyAssigned && row.Replacement == null) continue;
+                if (onlyAssigned && row.Replacement == null && !row.Bake.enabled) continue;
                 if (!Match(row.Original.name)) continue;
                 {
                     using (new EditorGUILayout.HorizontalScope())
@@ -300,6 +334,7 @@ namespace Znakisaki.ColorVariant
                     }
                     var (sev, msg) = Check(row, row.Original, row.Slots.Select(s => s.PropertyDimension), row.Replacement);
                     DrawStatus(sev, msg);
+                    DrawBake(row);
                 }
             }
         }
@@ -343,6 +378,88 @@ namespace Znakisaki.ColorVariant
             return (sev, msg);
         }
 
+        void DrawBake(CVTextureRow row)
+        {
+            var b = row.Bake;
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(28);
+                b.enabled = GUILayout.Toggle(b.enabled, " 色を焼き付けたコピーを作る", GUILayout.Width(200));
+                if (b.enabled) GUILayout.Label(row.Replacement != null ? $"元：差し替え先「{row.Replacement.name}」" : $"元：「{row.Original.name}」", EditorStyles.miniLabel);
+            }
+            if (!b.enabled) return;
+            if (!CVBake.CanBake(row.BakeSource, out string reason)) { DrawStatus(CVSeverity.Error, "焼き付け不可：" + reason); return; }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(28);
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    float lw = EditorGUIUtility.labelWidth;
+                    EditorGUIUtility.labelWidth = 110;
+                    b.hueShift = EditorGUILayout.Slider("色相（度）", b.hueShift, -180f, 180f);
+                    b.saturation = EditorGUILayout.Slider("彩度（倍）", b.saturation, 0f, 2f);
+                    b.brightness = EditorGUILayout.Slider("明度（倍）", b.brightness, 0f, 2f);
+                    b.tint = EditorGUILayout.ColorField(new GUIContent("乗算色"), b.tint, true, false, false);
+
+                    b.useGradient = EditorGUILayout.ToggleLeft("グラデーションを重ねる", b.useGradient);
+                    if (b.useGradient)
+                    {
+                        EditorGUI.indentLevel++;
+                        if (!gradients.TryGetValue(row, out var g)) { g = b.ToGradient(); gradients[row] = g; }
+                        EditorGUI.BeginChangeCheck();
+                        g = EditorGUILayout.GradientField("グラデーション", g);
+                        if (EditorGUI.EndChangeCheck()) { gradients[row] = g; b.FromGradient(g); }
+                        b.direction = EditorGUILayout.Popup("方向", b.direction, new[] { "縦（画像の上→下）", "横（画像の左→右）", "明るさ（暗→明：グラデーションマップ）" });
+                        b.blend = EditorGUILayout.Popup("合成", b.blend, new[] { "乗算", "色付け（明暗を保って色を置き換え）", "通常（上書き）" });
+                        b.strength = EditorGUILayout.Slider("強さ", b.strength, 0f, 1f);
+                        if (b.direction != (int)CVGradDirection.Luminance)
+                            EditorGUILayout.LabelField("※縦・横は画像（UV）上の向きです。モデル上の向きと一致するとは限りません。", EditorStyles.miniLabel);
+                        EditorGUI.indentLevel--;
+                    }
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (GUILayout.Button("リセット", GUILayout.Width(70))) { row.Bake = new CVBakeSettings { enabled = true }; gradients.Remove(row); }
+                        bool open = previewOpen.Contains(row);
+                        bool nowOpen = GUILayout.Toggle(open, "プレビュー", "Button", GUILayout.Width(80));
+                        if (nowOpen != open) { if (nowOpen) previewOpen.Add(row); else previewOpen.Remove(row); }
+                        GUILayout.Label(b.Describe(), EditorStyles.miniLabel);
+                    }
+                    EditorGUIUtility.labelWidth = lw;
+                    if (previewOpen.Contains(row)) DrawPreview(row);
+                }
+            }
+        }
+
+        void DrawPreview(CVTextureRow row)
+        {
+            var src = row.BakeSource as Texture2D;
+            if (src == null) return;
+            string sig = src.GetInstanceID() + JsonUtility.ToJson(row.Bake);
+            previews.TryGetValue(row, out var pv);
+            if (pv.tex == null || pv.sig != sig)
+            {
+                if (pv.tex != null) DestroyImmediate(pv.tex);
+                pv = (CVBake.MakePreview(src, row.Bake, PreviewSize), sig);
+                previews[row] = pv;
+            }
+            float size = Mathf.Min(160f, (position.width - 120f) / 2f);
+            float aspect = src.height > 0 ? src.width / (float)src.height : 1f;
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                foreach (var (tex, label) in new[] { ((Texture)src, "元"), ((Texture)pv.tex, "焼き付け後") })
+                {
+                    using (new EditorGUILayout.VerticalScope(GUILayout.Width(size)))
+                    {
+                        GUILayout.Label(label, EditorStyles.miniLabel);
+                        var r = GUILayoutUtility.GetRect(size, size / aspect, GUILayout.Width(size), GUILayout.Height(size / aspect));
+                        EditorGUI.DrawTextureTransparent(r, tex, ScaleMode.ScaleToFit);
+                    }
+                }
+            }
+            EditorGUILayout.LabelField($"プレビューは縮小表示（最大 {PreviewSize}px）です。生成時は元の解像度で処理します。", EditorStyles.miniLabel);
+        }
+
         bool Match(string name) => string.IsNullOrEmpty(search) || (name != null && name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
 
         void DrawStatus(CVSeverity sev, string msg)
@@ -362,7 +479,8 @@ namespace Znakisaki.ColorVariant
         Texture EffectiveTexture(CVSlot s)
         {
             if (slotOverrides.TryGetValue(s, out var ov) && ov != null) return ov;
-            if (s.TextureKey != null && scan.RowIndex.TryGetValue(s.TextureKey, out var row)) return row.Replacement;
+            if (s.TextureKey != null && scan.RowIndex.TryGetValue(s.TextureKey, out var row))
+                return bakedOverride.TryGetValue(row, out var baked) ? baked : row.Replacement;
             return null;
         }
 
@@ -459,14 +577,20 @@ namespace Znakisaki.ColorVariant
             if (nameErr != null) EditorGUILayout.HelpBox(nameErr, MessageType.Error);
             if (!rootOk) EditorGUILayout.HelpBox(rootErr, MessageType.Error);
             if (safe != null && rootOk) EditorGUILayout.LabelField("生成先：" + outputRoot.TrimEnd('/') + "/" + safe + "/Materials/", EditorStyles.miniLabel);
-            EditorGUILayout.HelpBox("・作成した .mat ファイルの削除は Undo（Ctrl+Z）の対象外です。不要になった場合は生成先フォルダーから手動で削除してください。\n・同名ファイルがある場合は上書きせず、末尾に _1, _2… を付けます。\n・シーンは保存しません。", MessageType.Warning);
+            EditorGUILayout.HelpBox("・作成した .mat / .png ファイルの削除は Undo（Ctrl+Z）の対象外です。不要になった場合は生成先フォルダーから手動で削除してください。\n・同名ファイルがある場合は上書きせず、末尾に _1, _2… を付けます。\n・シーンは保存しません。", MessageType.Warning);
 
         }
 
         void Generate(string safeName)
         {
             if (mode == CVApplyMode.DuplicateAvatar && avatarRoot == null) { ShowNotification(new GUIContent("対象アバターを指定してください")); return; }
+            bakedOverride.Clear();
+            var bakeRows = scan.Rows.Where(IsBaking).ToList();
+            var bakeErrors = new List<string>();
+            foreach (var row in bakeRows)
+                if (!CVBake.CanBake(row.BakeSource, out string why)) bakeErrors.Add($"焼き付け「{row.BakeSource.name}」：{why}");
             var plan = CVGenerator.BuildPlan(scan, IncludedRenderers(), ScopeRoot(), mode, EffectiveTexture, colors);
+            plan.Errors.AddRange(bakeErrors);
             if (plan.Errors.Count > 0)
             {
                 issues.Clear();
@@ -475,14 +599,22 @@ namespace Znakisaki.ColorVariant
                 EditorUtility.DisplayDialog("ColorVariant", $"生成できない指定が {plan.Errors.Count} 件あります（次元タイプ不一致など）。一覧を確認してください。\n\n" + string.Join("\n", plan.Errors.Take(5)), "OK");
                 return;
             }
-            if (plan.Entries.Count == 0) { EditorUtility.DisplayDialog("ColorVariant", "変更点がありません。差し替え先または色を指定してください。", "OK"); return; }
+            if (plan.Entries.Count == 0 && bakeRows.Count == 0) { EditorUtility.DisplayDialog("ColorVariant", "変更点がありません。差し替え先または色を指定してください。", "OK"); return; }
 
             var sb = new StringBuilder();
-            sb.AppendLine($"新規マテリアル {plan.UniqueMaterialCount} 件を作成し、{plan.Entries.Count} スロットに割り当てます。");
+            if (bakeRows.Count > 0)
+            {
+                sb.AppendLine($"焼き付けテクスチャ {bakeRows.Count} 枚を新規作成します（元テクスチャのコピー。元は変更しません）：");
+                foreach (var row in bakeRows.Take(5)) sb.AppendLine($"・{row.BakeSource.name}：{row.Bake.Describe()}");
+                if (bakeRows.Count > 5) sb.AppendLine($"…ほか {bakeRows.Count - 5} 枚");
+                sb.AppendLine($"作成先：{outputRoot.TrimEnd('/')}/{safeName}/Textures/");
+                sb.AppendLine();
+            }
+            sb.AppendLine(bakeRows.Count > 0 ? "続いて、新規マテリアルを作成して割り当てます。" : $"新規マテリアル {plan.UniqueMaterialCount} 件を作成し、{plan.Entries.Count} スロットに割り当てます。");
             sb.AppendLine($"作成先：{outputRoot.TrimEnd('/')}/{safeName}/Materials/");
             sb.AppendLine(mode == CVApplyMode.DuplicateAvatar ? $"適用先：\"{avatarRoot.name}\" の複製（元のアバターは変更しません）" : "適用先：選択したレンダラー（Ctrl+Z で戻せます）");
             sb.AppendLine();
-            sb.AppendLine("※作成した .mat ファイルは Ctrl+Z では削除されません。");
+            sb.AppendLine("※作成した .mat / .png ファイルは Ctrl+Z では削除されません。");
             if (plan.Warnings.Count > 0)
             {
                 sb.AppendLine();
@@ -498,12 +630,30 @@ namespace Znakisaki.ColorVariant
             foreach (var n in plan.Notes) log.Add("[情報] " + n);
             try
             {
+                if (bakeRows.Count > 0)
+                {
+                    string texFolder = outputRoot.Replace('\\', '/').TrimEnd('/') + "/" + safeName + "/Textures";
+                    foreach (var row in bakeRows)
+                    {
+                        var baked = CVBake.BakeToAsset((Texture2D)row.BakeSource, row.Bake, texFolder, row.BakeSource.name + "_" + safeName, log);
+                        if (baked == null) throw new Exception($"焼き付けテクスチャ「{row.BakeSource.name}」の作成に失敗しました");
+                        bakedOverride[row] = baked;
+                    }
+                    validateCache.Clear();
+                    plan = CVGenerator.BuildPlan(scan, IncludedRenderers(), ScopeRoot(), mode, EffectiveTexture, colors);
+                    if (plan.Errors.Count > 0) throw new Exception("焼き付け後の確認で問題が見つかりました：" + string.Join(" / ", plan.Errors));
+                }
                 CVGenerator.Execute(plan, ScopeRoot(), mode, outputRoot, safeName, log);
             }
             catch (Exception e)
             {
                 log.Add("[エラー] " + e.Message);
                 Debug.LogException(e);
+            }
+            finally
+            {
+                bakedOverride.Clear();
+                validateCache.Clear();
             }
             foldLog = true;
             if (mode == CVApplyMode.SelectedRenderers) Rescan();

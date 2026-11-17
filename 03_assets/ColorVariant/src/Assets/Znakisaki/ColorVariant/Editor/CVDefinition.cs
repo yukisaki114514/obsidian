@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.1-preview
+// Znakisaki ColorVariant v0.2.0-preview
 // バリエーション定義（平文 JSON）の保存・読み込み・参照解決。
 using System;
 using System.Collections.Generic;
@@ -33,6 +33,8 @@ namespace Znakisaki.ColorVariant
         public CVAssetRef to = new CVAssetRef();
         public bool hasScope;
         public CVScope scope = new CVScope();
+        public bool hasBake;                    // 焼き付け（to が空なら元テクスチャのコピーに焼き付け）
+        public CVBakeSettings bake = new CVBakeSettings();
     }
 
     [Serializable]
@@ -135,7 +137,7 @@ namespace Znakisaki.ColorVariant
                 if (!scopeIndex.ContainsKey(key)) scopeIndex.Add(key, s);
             }
 
-            foreach (var row in scan.Rows) row.Replacement = null;
+            foreach (var row in scan.Rows) { row.Replacement = null; row.Bake = new CVBakeSettings(); }
             slotOverrides.Clear();
             colors.Clear();
 
@@ -143,9 +145,14 @@ namespace Znakisaki.ColorVariant
             foreach (var ts in d.textureSwaps)
             {
                 n++;
-                string label = $"テクスチャ差し替え #{n}：{Nm(ts.from)} → {Nm(ts.to)}";
-                var to = CVRefs.Resolve<Texture>(ts.to, out string reason);
-                if (to == null) { issues.Add(new CVApplyIssue { Item = label, Reason = "差し替え先：" + reason }); continue; }
+                string label = $"テクスチャ差し替え #{n}：{Nm(ts.from)} → {(ts.hasBake && (ts.to == null || ts.to.IsEmpty) ? "（焼き付け）" : Nm(ts.to))}";
+                bool bakeOnly = ts.hasBake && !ts.hasScope && (ts.to == null || ts.to.IsEmpty);
+                Texture to = null;
+                if (!bakeOnly)
+                {
+                    to = CVRefs.Resolve<Texture>(ts.to, out string reason);
+                    if (to == null) { issues.Add(new CVApplyIssue { Item = label, Reason = "差し替え先：" + reason }); continue; }
+                }
 
                 if (ts.hasScope)
                 {
@@ -171,10 +178,20 @@ namespace Znakisaki.ColorVariant
                         issues.Add(new CVApplyIssue { Item = label, Reason = fromReason != null ? "差し替え元：" + fromReason : "対象内に差し替え元テクスチャを使うスロットがありません" });
                         continue;
                     }
-                    var dims = new List<UnityEngine.Rendering.TextureDimension>();
-                    foreach (var s in row.Slots) dims.Add(s.PropertyDimension);
-                    var sev = CVScanner.Validate(row.Original, dims, to, out string msg);
-                    if (sev == CVSeverity.Error) { issues.Add(new CVApplyIssue { Item = label, Reason = msg }); continue; }
+                    if (to != null)
+                    {
+                        var dims = new List<UnityEngine.Rendering.TextureDimension>();
+                        foreach (var s in row.Slots) dims.Add(s.PropertyDimension);
+                        var sev = CVScanner.Validate(row.Original, dims, to, out string msg);
+                        if (sev == CVSeverity.Error) { issues.Add(new CVApplyIssue { Item = label, Reason = msg }); continue; }
+                    }
+                    if (ts.hasBake && ts.bake != null)
+                    {
+                        if (!CVBake.CanBake(to != null ? to : row.Original, out string bakeReason))
+                        { issues.Add(new CVApplyIssue { Item = label, Reason = "焼き付け：" + bakeReason }); continue; }
+                        row.Bake = ts.bake.Clone();
+                        row.Bake.enabled = true;
+                    }
                     row.Replacement = to;
                 }
             }
@@ -211,12 +228,13 @@ namespace Znakisaki.ColorVariant
             var d = new CVDefinition { variantName = variantName };
             foreach (var row in scan.Rows)
             {
-                if (row.Replacement == null) continue;
-                string label = $"{row.Original.name} → {row.Replacement.name}";
+                bool bake = row.Bake != null && row.Bake.HasEffect;
+                if (row.Replacement == null && !bake) continue;
+                string label = $"{row.Original.name} → {(row.Replacement != null ? row.Replacement.name : "（焼き付け）")}";
                 if (!row.IsAsset) { issues.Add(new CVApplyIssue { Item = label, Reason = "差し替え元がアセットではないため保存できません" }); continue; }
                 var to = CVRefs.Make(row.Replacement);
-                if (to.IsEmpty) { issues.Add(new CVApplyIssue { Item = label, Reason = "差し替え先がアセットではないため保存できません" }); continue; }
-                d.textureSwaps.Add(new CVTextureSwap { from = CVRefs.Make(row.Original), to = to });
+                if (row.Replacement != null && to.IsEmpty) { issues.Add(new CVApplyIssue { Item = label, Reason = "差し替え先がアセットではないため保存できません" }); continue; }
+                d.textureSwaps.Add(new CVTextureSwap { from = CVRefs.Make(row.Original), to = to, hasBake = bake, bake = bake ? row.Bake.Clone() : new CVBakeSettings() });
             }
             foreach (var kv in slotOverrides)
             {

@@ -1,0 +1,11 @@
+{
+  "package": "ColorVariant",
+  "version": "0.2.0-preview",
+  "algorithm": "SHA-256",
+  "files": {
+    "CHANGELOG.md": "eef3ae2543f28864d1998c4a66670e135865ed4d6643b8e9456a3ee8a1f572a5",
+    "ColorVariant_v0.2.0-preview.unitypackage": "e4742d00c7e47cf514a17bedb413e9a2bfe0d819ac321515799b8a274bb41141",
+    "README.txt": "9a58a332c1525ada2c28a996313bc96571ea623e1f0566d262e9a1300228bf69",
+    "実装・検証報告.md": "94578e56540c86dd89834013737abe81c59b1d74b27b14e47f4c1ed9141b959a"
+  }
+}
