@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.0-preview
+// Znakisaki ColorVariant v0.1.1-preview
 // バリエーション定義（平文 JSON）の保存・読み込み・参照解決。
 using System;
 using System.Collections.Generic;

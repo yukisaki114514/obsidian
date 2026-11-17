@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.0-preview
+// Znakisaki ColorVariant v0.1.1-preview
 // 複製マテリアルの生成と割り当て。
 // 元マテリアルは読み取りのみ。元アバター階層には書き込まない（アバターモードは複製へ適用）。
 using System;

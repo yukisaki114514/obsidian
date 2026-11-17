@@ -1,4 +1,4 @@
-Znakisaki ColorVariant v0.1.0-preview
+Znakisaki ColorVariant v0.1.1-preview
 =====================================
 
 衣装・髪などの「色違い」を作る Unity エディター拡張です。

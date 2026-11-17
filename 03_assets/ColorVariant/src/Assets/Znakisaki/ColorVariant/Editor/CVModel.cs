@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.0-preview
+// Znakisaki ColorVariant v0.1.1-preview
 // 走査結果のデータモデルと、読み取り専用の走査処理。
 // ここでは一切の書き込み（SetDirty / Undo 記録 / アセット変更）を行わない。
 using System;
@@ -12,7 +12,7 @@ namespace Znakisaki.ColorVariant
 {
     internal static class CVInfo
     {
-        public const string Version = "0.1.0-preview";
+        public const string Version = "0.1.1-preview";
         public const string DefaultOutputRoot = "Assets/Znakisaki/ColorVariant";
     }
 

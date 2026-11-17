@@ -1,4 +1,4 @@
-// Znakisaki ColorVariant v0.1.0-preview
+// Znakisaki ColorVariant v0.1.1-preview
 // メインウィンドウ：Znakisaki/ColorVariant/Open Window
 using System;
 using System.Collections.Generic;
@@ -43,35 +43,101 @@ namespace Znakisaki.ColorVariant
         [NonSerialized] string outputRoot = CVInfo.DefaultOutputRoot;
         [NonSerialized] bool slotView;
         [NonSerialized] bool showHidden;
-        [NonSerialized] bool foldTargets = true, foldColors = true, foldIssues = true, foldLog = true;
+        [NonSerialized] bool foldTargets = false, foldColors = true, foldIssues = true, foldLog = true;
         [NonSerialized] Vector2 scrollMain;
         [NonSerialized] long lastDefMs = -1;
         // 検証結果キャッシュ（差し替え先が変わったときのみ再計算＝width/height 参照もその時だけ）
         [NonSerialized] readonly Dictionary<object, (Texture repl, CVSeverity sev, string msg)> validateCache = new Dictionary<object, (Texture, CVSeverity, string)>();
 
+        [NonSerialized] bool foldAbout;
+        [NonSerialized] bool onlyAssigned;
+        [NonSerialized] string search = "";
+        [NonSerialized] GUIStyle sectionTitle, okStyle, warnStyle, errStyle;
+
+        void InitStyles()
+        {
+            if (sectionTitle != null) return;
+            sectionTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 13 };
+            okStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+            okStyle.normal.textColor = EditorGUIUtility.isProSkin ? new Color(0.5f, 0.85f, 0.5f) : new Color(0.1f, 0.5f, 0.1f);
+            warnStyle = new GUIStyle(okStyle); warnStyle.normal.textColor = EditorGUIUtility.isProSkin ? new Color(1f, 0.8f, 0.3f) : new Color(0.6f, 0.4f, 0f);
+            errStyle = new GUIStyle(okStyle); errStyle.normal.textColor = EditorGUIUtility.isProSkin ? new Color(1f, 0.45f, 0.45f) : new Color(0.75f, 0.1f, 0.1f);
+        }
+
+        IDisposable Section(string title)
+        {
+            EditorGUILayout.Space(6);
+            var scope = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
+            EditorGUILayout.LabelField(title, sectionTitle);
+            return scope;
+        }
+
         void OnGUI()
         {
-            scrollMain = EditorGUILayout.BeginScrollView(scrollMain);
+            InitStyles();
             DrawHeader();
-            EditorGUILayout.Space();
-            DrawTargets();
-            EditorGUILayout.Space();
-            DrawSwapTable();
-            EditorGUILayout.Space();
-            DrawColors();
-            EditorGUILayout.Space();
-            DrawDefinition();
-            EditorGUILayout.Space();
-            DrawGenerate();
+            scrollMain = EditorGUILayout.BeginScrollView(scrollMain);
+            using (Section("① 対象を選ぶ")) DrawTargets();
+            using (Section("② テクスチャを差し替える")) DrawSwapTable();
+            using (Section("③ 色を変える（任意）")) DrawColors();
+            using (Section("④ 生成の設定")) DrawGenerate();
             DrawIssues();
             DrawLog();
             EditorGUILayout.EndScrollView();
+            DrawFooter();
+        }
+
+        // 画面下に固定：集計と生成ボタン
+        void DrawFooter()
+        {
+            int assigned = 0, warn = 0, err = 0;
+            if (scan != null)
+            {
+                foreach (var s in scan.Slots)
+                {
+                    var t = EffectiveTexture(s);
+                    if (t == null || t == s.Texture) continue;
+                    assigned++;
+                    var (sev, _) = Check(s, s.Texture, new[] { s.PropertyDimension }, t);
+                    if (sev == CVSeverity.Error) err++; else if (sev == CVSeverity.Warning) warn++;
+                }
+            }
+            string safe = CVGenerator.SanitizeName(variantName, out _);
+            bool rootOk = CVGenerator.ValidateOutputRoot(outputRoot, out _);
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label($"差し替え {assigned} スロット　色 {colors.Count(c => !string.IsNullOrEmpty(c.Property))} 件", EditorStyles.boldLabel);
+                    if (warn > 0) GUILayout.Label($"⚠ {warn}", warnStyle);
+                    if (err > 0) GUILayout.Label($"✕ {err}（生成不可）", errStyle);
+                    GUILayout.FlexibleSpace();
+                }
+                using (new EditorGUI.DisabledScope(scan == null || safe == null || !rootOk || err > 0))
+                    if (GUILayout.Button($"色違い「{safe ?? "?"}」を生成", GUILayout.Height(30))) Generate(safe);
+            }
         }
 
         // ================= 対象 =================
         void DrawHeader()
         {
-            EditorGUILayout.LabelField($"ColorVariant v{CVInfo.Version}", EditorStyles.boldLabel);
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+            {
+                GUILayout.Label($"ColorVariant v{CVInfo.Version}", EditorStyles.boldLabel);
+                GUILayout.FlexibleSpace();
+                foldAbout = GUILayout.Toggle(foldAbout, "このツールについて", EditorStyles.toolbarButton);
+                using (new EditorGUI.DisabledScope(scan == null))
+                {
+                    if (GUILayout.Button("定義を保存…", EditorStyles.toolbarButton)) SaveDefinition();
+                    if (GUILayout.Button("定義を読み込み…", EditorStyles.toolbarButton)) LoadDefinition();
+                }
+            }
+            if (foldAbout)
+                EditorGUILayout.HelpBox("衣装や髪の「色違い」を作るツールです。\n" +
+                    "テクスチャを差し替えた“複製マテリアル”を新しく作り、アバターの複製（または選んだレンダラー）に割り当てます。\n" +
+                    "元のマテリアルと元のアバターは変更しません。\n" +
+                    "定義（JSON）を保存すると、同じ色違いを別のアバター・衣装にも再適用できます。", MessageType.Info);
+            if (lastDefMs >= 0) EditorGUILayout.LabelField($"直近の定義読み込み：{lastDefMs} ms", EditorStyles.miniLabel);
             var newMode = (CVApplyMode)GUILayout.Toolbar((int)mode, new[] { "アバターモード（複製へ適用）", "レンダラーモード（選択レンダラーへ割り当て）" });
             if (newMode != mode)
             {
@@ -201,14 +267,18 @@ namespace Znakisaki.ColorVariant
         // ================= 差し替え表 =================
         void DrawSwapTable()
         {
-            EditorGUILayout.LabelField("差し替え表", EditorStyles.boldLabel);
             if (scan == null) { EditorGUILayout.HelpBox("対象を指定してください。", MessageType.Info); return; }
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.LabelField($"走査：{scan.Slots.Count} スロット / テクスチャ {scan.Rows.Count} 種 / {scan.ElapsedMs} ms", EditorStyles.miniLabel);
                 slotView = GUILayout.Toolbar(slotView ? 1 : 0, new[] { "元テクスチャ単位", "スロット単位" }, GUILayout.Width(220)) == 1;
             }
-            if (slotView) showHidden = EditorGUILayout.ToggleLeft("非表示（HideInInspector）プロパティも表示", showHidden);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                search = EditorGUILayout.TextField(search, EditorStyles.toolbarSearchField);
+                onlyAssigned = GUILayout.Toggle(onlyAssigned, "指定済みのみ", GUILayout.Width(90));
+                if (slotView) showHidden = GUILayout.Toggle(showHidden, "非表示プロパティ", GUILayout.Width(110));
+            }
 
             if (!slotView) DrawRows(); else DrawSlots();
         }
@@ -218,7 +288,8 @@ namespace Znakisaki.ColorVariant
             if (scan.Rows.Count == 0) { EditorGUILayout.HelpBox("テクスチャが設定されたスロットがありません。", MessageType.Info); return; }
             foreach (var row in scan.Rows)
             {
-                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                if (onlyAssigned && row.Replacement == null) continue;
+                if (!Match(row.Original.name)) continue;
                 {
                     using (new EditorGUILayout.HorizontalScope())
                     {
@@ -239,6 +310,8 @@ namespace Znakisaki.ColorVariant
             foreach (var s in scan.Slots)
             {
                 if (s.Hidden && !showHidden && !slotOverrides.ContainsKey(s)) continue;
+                if (onlyAssigned && EffectiveTexture(s) == null) continue;
+                if (!Match(s.Renderer.name) && !Match(s.Material.name) && !Match(s.Property) && !(s.Texture != null && Match(s.Texture.name))) continue;
                 if (s.Renderer != lastR) { EditorGUILayout.LabelField(s.Renderer.name, EditorStyles.boldLabel); lastR = s.Renderer; lastSlot = -1; }
                 if (s.SlotIndex != lastSlot || s.Material != lastM) { EditorGUILayout.LabelField($"  スロット{s.SlotIndex}: {s.Material.name}  ({s.Material.shader.name})", EditorStyles.miniBoldLabel); lastSlot = s.SlotIndex; lastM = s.Material; }
                 using (new EditorGUILayout.HorizontalScope())
@@ -270,13 +343,19 @@ namespace Znakisaki.ColorVariant
             return (sev, msg);
         }
 
-        static void DrawStatus(CVSeverity sev, string msg)
+        bool Match(string name) => string.IsNullOrEmpty(search) || (name != null && name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        void DrawStatus(CVSeverity sev, string msg)
         {
-            switch (sev)
+            using (new EditorGUILayout.HorizontalScope())
             {
-                case CVSeverity.Error: EditorGUILayout.HelpBox("✕ " + msg, MessageType.Error); break;
-                case CVSeverity.Warning: EditorGUILayout.HelpBox("⚠ " + msg, MessageType.Warning); break;
-                case CVSeverity.Ok: EditorGUILayout.LabelField("✓ " + msg, EditorStyles.miniLabel); break;
+                GUILayout.Space(28);
+                switch (sev)
+                {
+                    case CVSeverity.Error: GUILayout.Label("✕ " + msg, errStyle); break;
+                    case CVSeverity.Warning: GUILayout.Label("⚠ " + msg, warnStyle); break;
+                    case CVSeverity.Ok: GUILayout.Label("✓ " + msg, okStyle); break;
+                }
             }
         }
 
@@ -290,8 +369,6 @@ namespace Znakisaki.ColorVariant
         // ================= 色プロパティ =================
         void DrawColors()
         {
-            foldColors = EditorGUILayout.Foldout(foldColors, $"色プロパティの変更（{colors.Count}）", true);
-            if (!foldColors) return;
             EditorGUILayout.HelpBox("対象内のシェーダーが持つ Color 型プロパティから選びます。そのプロパティを持たないマテリアルは変更しません。マテリアル指定を空にすると、プロパティを持つ全マテリアルが対象です。", MessageType.None);
             var names = scan != null ? scan.ColorProperties.ToArray() : new string[0];
             for (int i = 0; i < colors.Count; i++)
@@ -313,20 +390,6 @@ namespace Znakisaki.ColorVariant
                 if (GUILayout.Button("色プロパティを追加", GUILayout.Width(160))) colors.Add(new CVColorEntry());
         }
 
-        // ================= 定義 =================
-        void DrawDefinition()
-        {
-            EditorGUILayout.LabelField("バリエーション定義（JSON）", EditorStyles.boldLabel);
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                using (new EditorGUI.DisabledScope(scan == null))
-                {
-                    if (GUILayout.Button("定義を保存…")) SaveDefinition();
-                    if (GUILayout.Button("定義を読み込んで表に反映…")) LoadDefinition();
-                }
-            }
-            if (lastDefMs >= 0) EditorGUILayout.LabelField($"直近の定義読み込み：{lastDefMs} ms", EditorStyles.miniLabel);
-        }
 
         void SaveDefinition()
         {
@@ -380,7 +443,6 @@ namespace Znakisaki.ColorVariant
         // ================= 生成 =================
         void DrawGenerate()
         {
-            EditorGUILayout.LabelField("生成", EditorStyles.boldLabel);
             variantName = EditorGUILayout.TextField("バリエーション名", variantName);
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -399,8 +461,6 @@ namespace Znakisaki.ColorVariant
             if (safe != null && rootOk) EditorGUILayout.LabelField("生成先：" + outputRoot.TrimEnd('/') + "/" + safe + "/Materials/", EditorStyles.miniLabel);
             EditorGUILayout.HelpBox("・作成した .mat ファイルの削除は Undo（Ctrl+Z）の対象外です。不要になった場合は生成先フォルダーから手動で削除してください。\n・同名ファイルがある場合は上書きせず、末尾に _1, _2… を付けます。\n・シーンは保存しません。", MessageType.Warning);
 
-            using (new EditorGUI.DisabledScope(scan == null || safe == null || !rootOk))
-                if (GUILayout.Button("色違いを生成", GUILayout.Height(28))) Generate(safe);
         }
 
         void Generate(string safeName)
