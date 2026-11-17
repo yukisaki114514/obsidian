@@ -4,7 +4,7 @@
   "algorithm": "SHA-256",
   "files": {
     "CHANGELOG.md": "73f59d9a7bf17e15f046d5f7926cf9ace6e7e0fb42b8e3a1c4227b4bf6d69356",
-    "ColorVariant_v0.1.0-preview.unitypackage": "810799b26a89189e239e5485222f0d46f7dfcb43c06e0546b2f6c00462e817ee",
+    "ColorVariant_v0.1.0-preview.unitypackage": "c064b87e8b2185a91a935f53dbe67acc769640ae26e9f343544ceb41ad5fea66",
     "README.txt": "697e012a337edd4ddd0d53b2e67a14e2a60448a16d21fa164df643339611e653",
     "実装・検証報告.md": "9029a70c9717e819abfb4d1401120eae4dcd0a694d5e5b8a7314b22ea3dab4e5"
   }
