@@ -1,0 +1,8 @@
+{
+    "name": "HandGestureCreator.Editor",
+    "references": [],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true
+}
