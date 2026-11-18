@@ -2,14 +2,22 @@
 
 Unity エディタ上で VRChat アバターのハンドジェスチャー（ピース、グー、指差しなど）を作成・保存し、他のアバターへ移植するためのエディタ拡張です。
 
-- バージョン: 1.0.1
+- バージョン: 1.1.0
 - 作者: Znakisaki
 - 連絡先: BOOTHのメッセージからお願いします
 - 動作環境: Unity 2022.3（VRChat SDK 不要。Rig が Humanoid のアバターのみ対応）
 
 ## 導入
-1. `HandGestureCreator.unitypackage` を Unity にドラッグ＆ドロップしてインポート（`Assets/HandGestureCreator/` に入ります）
-2. メニュー **Tools > Hand Gesture Creator** で専用ウィンドウを開く
+1. 作業前にプロジェクトのバックアップを取ってください。
+2. Unity でプロジェクトを開いた状態で `HandGestureCreator.unitypackage` をダブルクリックするか、Project ウィンドウへドラッグ＆ドロップして「Import」（`Assets/HandGestureCreator/` に入ります）
+3. メニュー **Tools > Hand Gesture Creator** が出れば導入完了
+
+**取り込めないとき:** メニュー「Assets > Import Package > Custom Package...」から選ぶか、
+同梱の `folder_version/HandGestureCreator` フォルダを Project ウィンドウの `Assets` へドラッグ＆ドロップしてください（同じ内容が入ります）。
+
+**更新:** 新しい unitypackage を同じ手順で取り込むだけです。以前フォルダのコピーで入れていた場合は、先に `Assets/HandGestureCreator` を削除してください（スクリプトが二重になりエラーになります）。
+
+**アンインストール:** `Assets/HandGestureCreator` フォルダを削除してください。書き出した `.anim` とライブラリ（JSON）はそのまま残ります。
 
 ## 使い方
 1. シーン上のアバター（Humanoid の Animator）をウィンドウにドラッグ
@@ -21,12 +29,13 @@ Unity エディタ上で VRChat アバターのハンドジェスチャー（ピ
 4. 名前を付けて **ライブラリに新規保存**
 5. **.anim として書き出し** → VRChat の FX / Gesture レイヤーのジェスチャーステートに割り当て
 
-「ポーズを元に戻す」かウィンドウを閉じると、アバターの指は編集前の状態に戻ります。
-スクリプトの再コンパイル前・Play モード開始前・Unity 終了時にも自動で戻します。
+プレビューは **シーン上空 (Y=100) に出る表示専用のコピー** に表示されます。実アバターには一切書き込まず、
+コピーは Hierarchy に出ず、シーンにも保存されません。プレビュー開始時にシーンビューのカメラが手に寄り、終了時に元の位置へ戻ります。
 
 ## 仕様・制限
-- プレビューで動かすのは **指ボーンのみ** です。手以外の部位を手作業で動かしても巻き戻りません。
-- プレビューは Transform を直接書き換えるため、元に戻した後もシーンが「変更あり(*)」になることがあります。保存せずに閉じて問題ありません。
+- プレビューは実アバターに触れないため、シーンが「変更あり(*)」になることはありません（なった場合は Console に警告が出ます）。
+- プレビューのコピーは Play モード開始・スクリプト再読み込み・シーン保存・シーン切り替え・Unity 終了の前に自動で破棄されます。プレハブ編集画面を開いている間は一時停止します。
+- プレビューのコピーは作成時点のアバターの姿勢・表示中のメッシュを写します。アバター側を変更したら、アバター欄を入れ直すと反映されます。
 - 両手モードは既定で「左右同じ形」です。OFF にすると左右を別々に編集でき、`.anim` 書き出しには左右別の形が入ります。
   ライブラリ/JSON に保存されるのは編集中の片手分の形のみです。
 - 「アバターの現在の指を読み取る」「.anim から読み込み」は、両手モードでは左右両方を読み取ります。
@@ -37,6 +46,12 @@ Unity エディタ上で VRChat アバターのハンドジェスチャー（ピ
 ライブラリは JSON でプロジェクト外に保存されます（既定:
 `%LOCALAPPDATA%/VRCHandGestureCreator/Gestures`）。保存先は EditorPrefs に記録されるため、
 どの Unity プロジェクトで開いても同じライブラリが表示されます。JSON 単体での書き出し/読み込みも可能です。
+
+## アバターの既存ジェスチャーを一括取り込み
+ライブラリ欄の「コントローラー」に Gesture / FX コントローラーを指定して **一括取り込み** を押すと、
+GestureLeft / GestureRight の 8 種（待機 / グー / パー / 指差し / ピース / ロック / 銃 / サムズアップ）ごとの手の形をライブラリに追加します。
+アバター（VRC Avatar Descriptor 付き）を指定していれば、コントローラーは自動で入ります（Descriptor は読むだけで変更しません。VRChat SDK が無くても動きます）。
+左右で同じ形のものは 1 つにまとめ、違うものは `_L` / `_R` を付けて別々に保存します。ブレンドツリーはトリガーを握り切った側の形を使います。
 
 ## 他アバターへの移植
 ジェスチャーは **Humanoid のマッスル値**（-1〜1）で保持しているため、ボーンの長さや向きが違うアバターでも
@@ -52,5 +67,7 @@ Unity エディタ上で VRChat アバターのハンドジェスチャー（ピ
 | `Editor/HandGestureLibrary.cs` | プロジェクト共通ライブラリ（JSON 保存） |
 | `Editor/HandGestureAnimUtility.cs` | アバターへの適用・読取、AnimationClip 変換 |
 | `Editor/HandGestureWindow.cs` | 専用エディタウィンドウ |
+| `Editor/HandGesturePreview.cs` | 非破壊プレビュー（保存されないコピーに表示） |
+| `Editor/GestureControllerImport.cs` | 既存コントローラーからの一括取り込み |
 | `Editor/HandGestureInfo.cs` | 製品名・バージョン・作者情報 |
 | `Editor/HandGestureCreator.Editor.asmdef` | エディタ専用アセンブリ定義 |

@@ -4,7 +4,7 @@ namespace HandGestureCreator
     public static class HandGestureInfo
     {
         public const string ProductName = "Hand Gesture Creator";
-        public const string Version = "1.0.1";
+        public const string Version = "1.1.0";
         public const string Author = "Znakisaki";
         public const string Contact = "BOOTHのメッセージからお願いします";
     }

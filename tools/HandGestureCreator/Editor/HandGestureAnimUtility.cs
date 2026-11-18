@@ -70,32 +70,6 @@ namespace HandGestureCreator
             return g;
         }
 
-        /// <summary>
-        /// HumanPoseHandler経由でアバターの指にマッスル値を適用。
-        /// マッスル空間で適用するので、どのHumanoidアバターでも同じ形になる。
-        /// </summary>
-        public static void ApplyToAvatar(Animator animator, HandGesture left, HandGesture right)
-        {
-            if (!IsValidHumanoid(animator)) return;
-            using (var handler = new HumanPoseHandler(animator.avatar, animator.transform))
-            {
-                var pose = new HumanPose();
-                handler.GetHumanPose(ref pose);
-                if (left != null) WriteMuscles(ref pose, HandSide.Left, left);
-                if (right != null) WriteMuscles(ref pose, HandSide.Right, right);
-                // SetHumanPose は全身を書き換えるため、指以外のTransformは適用前の値へ戻す
-                // 適用対象の手の指以外(反対の手の指も含む)は一切動かさない
-                var fingers = new HashSet<Transform>();
-                if (left != null) fingers.UnionWith(FingerBones(animator, HandSide.Left));
-                if (right != null) fingers.UnionWith(FingerBones(animator, HandSide.Right));
-                var keep = new List<(Transform t, Vector3 p, Quaternion r, Vector3 s)>();
-                foreach (var t in animator.GetComponentsInChildren<Transform>(true))
-                    if (!fingers.Contains(t)) keep.Add((t, t.localPosition, t.localRotation, t.localScale));
-                handler.SetHumanPose(ref pose);
-                foreach (var (t, p, r, s) in keep) { t.localPosition = p; t.localRotation = r; t.localScale = s; }
-            }
-        }
-
         /// <summary>アバターの現在の指ポーズを読み取る(既存アバターから移植する用)</summary>
         public static HandGesture ReadFromAvatar(Animator animator, HandSide side)
         {
@@ -113,16 +87,6 @@ namespace HandGestureCreator
                 }
             }
             return g;
-        }
-
-        static void WriteMuscles(ref HumanPose pose, HandSide side, HandGesture g)
-        {
-            for (int f = 0; f < HandGesture.FingerCount; f++)
-            for (int p = 0; p < HandGesture.MusclesPerFinger; p++)
-            {
-                int idx = HandGesture.MuscleIndex(side, f, p);
-                if (idx >= 0) pose.muscles[idx] = g.Get(f, p);
-            }
         }
 
         /// <summary>左右の指ボーン(存在するもののみ)</summary>

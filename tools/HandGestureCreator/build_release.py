@@ -9,6 +9,7 @@ IMP = {".cs": "MonoImporter:\n  externalObjects: {}\n  serializedVersion: 2\n  d
        ".md": "TextScriptImporter:\n  externalObjects: {}\n  userData: \n  assetBundleName: \n  assetBundleVariant: \n"}
 guids = dict(l.split() for l in open(os.path.join(HERE, "guids.txt")) if l.strip())
 pkg = io.BytesIO()
+folder_files = []  # folder_version 用 (同じ GUID の .meta を付ける)
 with tarfile.open(fileobj=pkg, mode="w:gz") as tar:
     def add(name, data):
         ti = tarfile.TarInfo(name); ti.size = len(data); ti.mode = 0o644
@@ -23,6 +24,7 @@ with tarfile.open(fileobj=pkg, mode="w:gz") as tar:
             add(f"{g}/asset", open(src, "rb").read())
             meta = IMP[os.path.splitext(src)[1]]
         add(f"{g}/asset.meta", f"fileFormatVersion: 2\nguid: {g}\n{meta}".encode())
+        folder_files.append((apath, src, f"fileFormatVersion: 2\nguid: {g}\n{meta}".encode()))
 root = f"HandGestureCreator_v{ver}"
 zpath = os.path.join(out, root + ".zip")
 with zipfile.ZipFile(zpath, "w") as z:
@@ -31,4 +33,14 @@ with zipfile.ZipFile(zpath, "w") as z:
     for f in ["README.md", "CHANGELOG.md", "FAQ.txt"]:
         z.write(os.path.join(HERE, f), f"{root}/{f}", compress_type=zipfile.ZIP_DEFLATED)
     z.writestr(f"{root}/HandGestureCreator.unitypackage", pkg.getvalue(), compress_type=zipfile.ZIP_DEFLATED)
+    # unitypackage を取り込めないとき用のフォルダ版 (中身・GUID は同じ)
+    fv = f"{root}/folder_version/"
+    for apath, src, meta in folder_files:
+        rel = apath[len("Assets/"):]
+        z.writestr(fv + rel + ".meta", meta, compress_type=zipfile.ZIP_DEFLATED)
+        if os.path.isdir(src):
+            d = zipfile.ZipInfo(fv + rel + "/", time.localtime()[:6]); d.external_attr = 0o40755 << 16 | 0x10
+            z.writestr(d, b"")
+        else:
+            z.write(src, fv + rel, compress_type=zipfile.ZIP_DEFLATED)
 print(zpath)

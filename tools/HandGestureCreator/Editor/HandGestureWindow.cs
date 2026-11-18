@@ -43,12 +43,11 @@ namespace HandGestureCreator
         List<(string path, HandGesture gesture)> _library = new List<(string, HandGesture)>();
         string _libFilter = "";
 
-        // プレビュー前の「指ボーンだけ」のTransformを保持し、終了時に元へ戻す。
-        // [SerializeField] によりドメインリロード後も保持される。
-        [System.Serializable]
-        struct BoneState { public Transform t; public Vector3 p; public Quaternion r; public Vector3 s; }
-        [SerializeField] Animator _snapshotOwner;
-        [SerializeField] List<BoneState> _snapshot = new List<BoneState>();
+        // 非破壊プレビュー(実アバターには書き込まず、保存されないコピーに表示する)
+        readonly HandGesturePreview _preview = new HandGesturePreview();
+
+        // コントローラーからの一括取り込み
+        UnityEditor.Animations.AnimatorController _importController;
 
         [MenuItem("Tools/Hand Gesture Creator")]
         public static void Open()
@@ -59,28 +58,35 @@ namespace HandGestureCreator
 
         void OnEnable()
         {
-            AssemblyReloadEvents.beforeAssemblyReload += RestoreSnapshot;
-            EditorApplication.playModeStateChanged += OnPlayModeChanged;
-            EditorApplication.quitting += RestoreSnapshot;
+            // 異常終了などで取り残されたプレビュー用コピーを片付ける
+            int swept = HandGesturePreview.SweepOrphans();
+            if (swept > 0) Debug.Log($"[Hand Gesture Creator] 取り残されていたプレビュー用コピーを {swept} 個片付けました。");
             RefreshLibrary();
             if (_animator == null && Selection.activeGameObject != null)
                 _animator = Selection.activeGameObject.GetComponentInParent<Animator>();
+            EditorApplication.update += OnEditorUpdate;
         }
 
         void OnDisable()
         {
-            AssemblyReloadEvents.beforeAssemblyReload -= RestoreSnapshot;
-            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
-            EditorApplication.quitting -= RestoreSnapshot;
-            RestoreSnapshot();
+            EditorApplication.update -= OnEditorUpdate;
+            _preview.Stop();
         }
 
-        void OnPlayModeChanged(PlayModeStateChange s)
+        // プレビューが外部要因(Play モード・シーン切替・再読み込み)で止まった後、
+        // 編集モードに戻ったら自動で再開する
+        double _nextCheck;
+        void OnEditorUpdate()
         {
-            if (s == PlayModeStateChange.ExitingEditMode) RestoreSnapshot();
+            if (EditorApplication.timeSinceStartup < _nextCheck) return;
+            _nextCheck = EditorApplication.timeSinceStartup + 0.5;
+            if (_livePreview && !_preview.Active && !EditorApplication.isPlayingOrWillChangePlaymode
+                && HandGestureAnimUtility.IsValidHumanoid(_animator))
+            {
+                ApplyPreview();
+                Repaint();
+            }
         }
-
-        void OnDestroy() => RestoreSnapshot();
 
         void RefreshLibrary() => _library = HandGestureLibrary.LoadAll();
 
@@ -110,8 +116,9 @@ namespace HandGestureCreator
                 var a = (Animator)EditorGUILayout.ObjectField("Animator", _animator, typeof(Animator), true);
                 if (EditorGUI.EndChangeCheck())
                 {
-                    RestoreSnapshot();
                     _animator = a;
+                    _importController = null;
+                    _preview.RequestFrame();
                     ApplyPreview();
                 }
 
@@ -134,8 +141,9 @@ namespace HandGestureCreator
                 bool live = EditorGUILayout.Toggle("ライブプレビュー", _livePreview);
                 if (EditorGUI.EndChangeCheck())
                 {
-                    RestoreSnapshot();
                     _livePreview = live;
+                    if (!live) _preview.Stop();
+                    _preview.RequestFrame();
                     ApplyPreview();
                 }
 
@@ -143,10 +151,9 @@ namespace HandGestureCreator
                 {
                     using (new EditorGUI.DisabledScope(!HandGestureAnimUtility.IsValidHumanoid(_animator)))
                     {
-                        if (GUILayout.Button("手にフォーカス")) FocusHand();
+                        if (GUILayout.Button("カメラを合わせ直す")) { _preview.RequestFrame(); ApplyPreview(); }
                         if (GUILayout.Button("アバターの現在の指を読み取る"))
                         {
-                            RestoreSnapshot();
                             if (_target != Target.Right) _gestureL = HandGestureAnimUtility.ReadFromAvatar(_animator, HandSide.Left);
                             if (_target != Target.Left) _gestureR = HandGestureAnimUtility.ReadFromAvatar(_animator, HandSide.Right);
                             if (_target == Target.Both) _symmetric = false; // 読み取った左右差を保持
@@ -154,8 +161,13 @@ namespace HandGestureCreator
                             ApplyPreview();
                         }
                     }
-                    if (GUILayout.Button("ポーズを元に戻す")) RestoreSnapshot();
+                    using (new EditorGUI.DisabledScope(!_preview.Active))
+                        if (GUILayout.Button("プレビュー終了")) { _livePreview = false; _preview.Stop(); }
                 }
+                if (!string.IsNullOrEmpty(_preview.Problem)) EditorGUILayout.HelpBox(_preview.Problem, MessageType.Warning);
+                if (!string.IsNullOrEmpty(_preview.Notice)) EditorGUILayout.HelpBox(_preview.Notice, MessageType.Info);
+                if (_livePreview)
+                    EditorGUILayout.HelpBox("プレビューはシーン上空(Y=100)の表示専用コピーに出ます。実アバターとシーンは変更されません。", MessageType.None);
             }
         }
 
@@ -296,6 +308,18 @@ namespace HandGestureCreator
                     if (GUILayout.Button("更新", GUILayout.Width(44))) RefreshLibrary();
                 }
 
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (_importController == null && _animator != null)
+                        _importController = GestureControllerImport.FindController(_animator.gameObject);
+                    _importController = (UnityEditor.Animations.AnimatorController)EditorGUILayout.ObjectField(
+                        new GUIContent("コントローラー", "Gesture / FX コントローラー。アバター指定時は Avatar Descriptor から自動で入ります"),
+                        _importController, typeof(UnityEditor.Animations.AnimatorController), false);
+                    using (new EditorGUI.DisabledScope(_importController == null))
+                        if (GUILayout.Button(new GUIContent("一括取り込み", "8 種のジェスチャー×左右の手の形をライブラリに追加します"), GUILayout.Width(90)))
+                            ImportFromController();
+                }
+
                 _libFilter = EditorGUILayout.TextField("検索", _libFilter);
 
                 if (_library.Count == 0)
@@ -343,53 +367,31 @@ namespace HandGestureCreator
 
         // ================= Preview =================
 
-        void TakeSnapshot()
-        {
-            if (_snapshotOwner == _animator && _snapshot.Count > 0) return;
-            RestoreSnapshot();
-            _snapshotOwner = _animator;
-            foreach (var t in HandGestureAnimUtility.FingerBones(_animator))
-                _snapshot.Add(new BoneState { t = t, p = t.localPosition, r = t.localRotation, s = t.localScale });
-        }
-
-        void RestoreSnapshot()
-        {
-            if (_snapshot == null) _snapshot = new List<BoneState>();
-            foreach (var b in _snapshot)
-            {
-                if (b.t == null) continue;
-                b.t.localPosition = b.p; b.t.localRotation = b.r; b.t.localScale = b.s;
-            }
-            _snapshot.Clear();
-            _snapshotOwner = null;
-            SceneView.RepaintAll();
-        }
-
         void ApplyPreview()
         {
             if (!_livePreview || !HandGestureAnimUtility.IsValidHumanoid(_animator)) return;
-            if (EditorApplication.isPlaying) return;
-            TakeSnapshot();
-            HandGestureAnimUtility.ApplyToAvatar(_animator, LeftForApply, RightForApply);
-            SceneView.RepaintAll();
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (!_preview.Active) _preview.Start();
+            var label = $"{_animator.gameObject.name} / {(_target == Target.Left ? "左手" : _target == Target.Right ? "右手" : "両手")} / {_gesture.name}";
+            _preview.Update(_animator, LeftForApply, RightForApply, label);
         }
 
-        void FocusHand()
+        void ImportFromController()
         {
-            var sv = SceneView.lastActiveSceneView;
-            if (sv == null) return;
-            Bounds? b = null;
-            foreach (var hb in new[] { HumanBodyBones.LeftHand, HumanBodyBones.RightHand })
+            if (_importController == null) return;
+            var prefix = _animator != null ? _animator.gameObject.name : _importController.name;
+            var list = GestureControllerImport.Extract(_importController, prefix);
+            if (list.Count == 0)
             {
-                if (_target == Target.Left && hb == HumanBodyBones.RightHand) continue;
-                if (_target == Target.Right && hb == HumanBodyBones.LeftHand) continue;
-                var bone = _animator.GetBoneTransform(hb);
-                if (bone == null) continue;
-                var bb = b ?? new Bounds(bone.position, Vector3.one * 0.15f);
-                foreach (var t in bone.GetComponentsInChildren<Transform>()) bb.Encapsulate(t.position);
-                b = bb;
+                EditorUtility.DisplayDialog("取り込み", "GestureLeft / GestureRight で切り替わる、指のマッスルカーブを含むクリップが見つかりませんでした。", "OK");
+                return;
             }
-            if (b.HasValue) sv.Frame(b.Value, false);
+            if (!EditorUtility.DisplayDialog("取り込み",
+                $"{list.Count} 個の手の形をライブラリに追加します。\n(同名のものは上書きせず、番号を付けて保存します)\n\n" +
+                string.Join("\n", list.ConvertAll(g => "・" + g.name)), "追加", "キャンセル")) return;
+            foreach (var g in list) HandGestureLibrary.Save(g, false);
+            RefreshLibrary();
+            ShowNotification(new GUIContent($"{list.Count} 個追加しました"));
         }
 
         // ================= Import / Export =================
