@@ -12,34 +12,75 @@ namespace HandGestureCreator
         Animator _animator;
         Target _target = Target.Right;
         bool _livePreview = true;
-        HandGesture _gesture = HandGesture.BuiltIn[0].Clone();
+        // 両手モードで「左右同じ」をOFFにすると左右別々に編集できる
+        [SerializeField] HandGesture _gestureR = HandGesture.BuiltIn[0].Clone();
+        [SerializeField] HandGesture _gestureL = HandGesture.BuiltIn[0].Clone();
+        [SerializeField] bool _symmetric = true;
+        [SerializeField] HandSide _editSide = HandSide.Right;
         string _loadedPath;
+
+        /// <summary>今スライダーで編集している手</summary>
+        HandSide EditingSide => _target == Target.Left ? HandSide.Left
+            : _target == Target.Right ? HandSide.Right
+            : _symmetric ? HandSide.Right : _editSide;
+
+        HandGesture _gesture
+        {
+            get => EditingSide == HandSide.Left ? _gestureL : _gestureR;
+            set
+            {
+                if (EditingSide == HandSide.Left) _gestureL = value; else _gestureR = value;
+                if (_target == Target.Both && _symmetric) { _gestureR = value; _gestureL = value.Clone(); }
+            }
+        }
+
+        HandGesture LeftForApply => _target == Target.Right ? null
+            : _target == Target.Both && _symmetric ? _gestureR : _gestureL;
+        HandGesture RightForApply => _target == Target.Left ? null : _gestureR;
 
         readonly bool[] _fingerFold = { true, true, true, true, true };
         Vector2 _scroll, _libScroll;
         List<(string path, HandGesture gesture)> _library = new List<(string, HandGesture)>();
         string _libFilter = "";
 
-        // プレビュー前のトランスフォームを保持して、終了時に完全に元へ戻す
-        Animator _snapshotOwner;
-        readonly List<(Transform t, Vector3 p, Quaternion r, Vector3 s)> _snapshot =
-            new List<(Transform, Vector3, Quaternion, Vector3)>();
+        // プレビュー前の「指ボーンだけ」のTransformを保持し、終了時に元へ戻す。
+        // [SerializeField] によりドメインリロード後も保持される。
+        [System.Serializable]
+        struct BoneState { public Transform t; public Vector3 p; public Quaternion r; public Vector3 s; }
+        [SerializeField] Animator _snapshotOwner;
+        [SerializeField] List<BoneState> _snapshot = new List<BoneState>();
 
         [MenuItem("Tools/Hand Gesture Creator")]
         public static void Open()
         {
-            var w = GetWindow<HandGestureWindow>("Hand Gesture Creator");
+            var w = GetWindow<HandGestureWindow>($"{HandGestureInfo.ProductName} v{HandGestureInfo.Version}");
             w.minSize = new Vector2(380, 520);
         }
 
         void OnEnable()
         {
+            AssemblyReloadEvents.beforeAssemblyReload += RestoreSnapshot;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
+            EditorApplication.quitting += RestoreSnapshot;
             RefreshLibrary();
             if (_animator == null && Selection.activeGameObject != null)
                 _animator = Selection.activeGameObject.GetComponentInParent<Animator>();
         }
 
-        void OnDisable() => RestoreSnapshot();
+        void OnDisable()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload -= RestoreSnapshot;
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            EditorApplication.quitting -= RestoreSnapshot;
+            RestoreSnapshot();
+        }
+
+        void OnPlayModeChanged(PlayModeStateChange s)
+        {
+            if (s == PlayModeStateChange.ExitingEditMode) RestoreSnapshot();
+        }
+
+        void OnDestroy() => RestoreSnapshot();
 
         void RefreshLibrary() => _library = HandGestureLibrary.LoadAll();
 
@@ -79,6 +120,17 @@ namespace HandGestureCreator
 
                 EditorGUI.BeginChangeCheck();
                 _target = (Target)GUILayout.Toolbar((int)_target, new[] { "左手", "右手", "両手" });
+                if (_target == Target.Both)
+                {
+                    bool sym = EditorGUILayout.Toggle("左右同じ形", _symmetric);
+                    if (sym != _symmetric)
+                    {
+                        _symmetric = sym;
+                        if (sym) _gestureL = _gestureR.Clone();
+                    }
+                    if (!_symmetric)
+                        _editSide = (HandSide)GUILayout.Toolbar((int)_editSide, new[] { "左手を編集", "右手を編集" });
+                }
                 bool live = EditorGUILayout.Toggle("ライブプレビュー", _livePreview);
                 if (EditorGUI.EndChangeCheck())
                 {
@@ -95,8 +147,9 @@ namespace HandGestureCreator
                         if (GUILayout.Button("アバターの現在の指を読み取る"))
                         {
                             RestoreSnapshot();
-                            _gesture = HandGestureAnimUtility.ReadFromAvatar(_animator,
-                                _target == Target.Left ? HandSide.Left : HandSide.Right);
+                            if (_target != Target.Right) _gestureL = HandGestureAnimUtility.ReadFromAvatar(_animator, HandSide.Left);
+                            if (_target != Target.Left) _gestureR = HandGestureAnimUtility.ReadFromAvatar(_animator, HandSide.Right);
+                            if (_target == Target.Both) _symmetric = false; // 読み取った左右差を保持
                             _loadedPath = null;
                             ApplyPreview();
                         }
@@ -130,7 +183,9 @@ namespace HandGestureCreator
 
         void DrawFingerSection()
         {
-            EditorGUILayout.LabelField("指の編集  (曲げ: 1=伸ばす / -1=曲げる)", EditorStyles.boldLabel);
+            var editing = _target == Target.Both && _symmetric ? "両手" : EditingSide == HandSide.Left ? "左手" : "右手";
+            EditorGUILayout.LabelField($"指の編集 [{editing}]  (曲げ: 1=伸ばす / -1=曲げる)", EditorStyles.boldLabel);
+            bool changed = false;
             EditorGUI.BeginChangeCheck();
             for (int f = 0; f < HandGesture.FingerCount; f++)
             {
@@ -146,6 +201,7 @@ namespace HandGestureCreator
                     {
                         float d = nAvg - avg;
                         foreach (var p in new[] { 0, 2, 3 }) _gesture.Set(f, p, _gesture.Get(f, p) + d);
+                        changed = true;
                     }
 
                     if (!_fingerFold[f]) continue;
@@ -155,7 +211,7 @@ namespace HandGestureCreator
                     EditorGUI.indentLevel--;
                 }
             }
-            if (EditorGUI.EndChangeCheck()) ApplyPreview();
+            if (EditorGUI.EndChangeCheck() || changed) { SyncSymmetric(); ApplyPreview(); }
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -164,9 +220,15 @@ namespace HandGestureCreator
                 if (GUILayout.Button("値をリセット"))
                 {
                     _gesture.muscles = new float[HandGesture.MuscleCount];
+                    SyncSymmetric();
                     ApplyPreview();
                 }
             }
+        }
+
+        void SyncSymmetric()
+        {
+            if (_target == Target.Both && _symmetric) _gestureL = _gestureR.Clone();
         }
 
         void SetAllFold(bool v) { for (int i = 0; i < _fingerFold.Length; i++) _fingerFold[i] = v; }
@@ -177,6 +239,8 @@ namespace HandGestureCreator
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 _gesture.name = EditorGUILayout.TextField("ジェスチャー名", _gesture.name);
+                if (_target == Target.Both && !_symmetric)
+                    EditorGUILayout.HelpBox("ライブラリ/JSONには編集中の手の形のみ保存されます。左右別の形は .anim 書き出しで保存してください。", MessageType.Info);
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -284,16 +348,17 @@ namespace HandGestureCreator
             if (_snapshotOwner == _animator && _snapshot.Count > 0) return;
             RestoreSnapshot();
             _snapshotOwner = _animator;
-            foreach (var t in _animator.GetComponentsInChildren<Transform>(true))
-                _snapshot.Add((t, t.localPosition, t.localRotation, t.localScale));
+            foreach (var t in HandGestureAnimUtility.FingerBones(_animator))
+                _snapshot.Add(new BoneState { t = t, p = t.localPosition, r = t.localRotation, s = t.localScale });
         }
 
         void RestoreSnapshot()
         {
-            foreach (var (t, p, r, s) in _snapshot)
+            if (_snapshot == null) _snapshot = new List<BoneState>();
+            foreach (var b in _snapshot)
             {
-                if (t == null) continue;
-                t.localPosition = p; t.localRotation = r; t.localScale = s;
+                if (b.t == null) continue;
+                b.t.localPosition = b.p; b.t.localRotation = b.r; b.t.localScale = b.s;
             }
             _snapshot.Clear();
             _snapshotOwner = null;
@@ -305,20 +370,26 @@ namespace HandGestureCreator
             if (!_livePreview || !HandGestureAnimUtility.IsValidHumanoid(_animator)) return;
             if (EditorApplication.isPlaying) return;
             TakeSnapshot();
-            HandGestureAnimUtility.ApplyToAvatar(_animator,
-                _target != Target.Right ? _gesture : null,
-                _target != Target.Left ? _gesture : null);
+            HandGestureAnimUtility.ApplyToAvatar(_animator, LeftForApply, RightForApply);
             SceneView.RepaintAll();
         }
 
         void FocusHand()
         {
-            var bone = _animator.GetBoneTransform(_target == Target.Left ? HumanBodyBones.LeftHand : HumanBodyBones.RightHand);
             var sv = SceneView.lastActiveSceneView;
-            if (bone == null || sv == null) return;
-            var b = new Bounds(bone.position, Vector3.one * 0.15f);
-            foreach (var t in bone.GetComponentsInChildren<Transform>()) b.Encapsulate(t.position);
-            sv.Frame(b, false);
+            if (sv == null) return;
+            Bounds? b = null;
+            foreach (var hb in new[] { HumanBodyBones.LeftHand, HumanBodyBones.RightHand })
+            {
+                if (_target == Target.Left && hb == HumanBodyBones.RightHand) continue;
+                if (_target == Target.Right && hb == HumanBodyBones.LeftHand) continue;
+                var bone = _animator.GetBoneTransform(hb);
+                if (bone == null) continue;
+                var bb = b ?? new Bounds(bone.position, Vector3.one * 0.15f);
+                foreach (var t in bone.GetComponentsInChildren<Transform>()) bb.Encapsulate(t.position);
+                b = bb;
+            }
+            if (b.HasValue) sv.Frame(b.Value, false);
         }
 
         // ================= Import / Export =================
@@ -329,9 +400,10 @@ namespace HandGestureCreator
             var path = EditorUtility.SaveFilePanelInProject("AnimationClip を書き出し",
                 _gesture.name + suffix, "anim", "VRChatの FX / Gesture レイヤーに割り当てられます");
             if (string.IsNullOrEmpty(path)) return;
-            var clip = HandGestureAnimUtility.CreateClip(
-                _target != Target.Right ? _gesture : null,
-                _target != Target.Left ? _gesture : null);
+            if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path) != null &&
+                !EditorUtility.DisplayDialog("上書き確認", $"{path} は既に存在します。上書きしますか？\n(このクリップを参照しているAnimatorの設定は保持されます)", "上書き", "キャンセル"))
+                return;
+            var clip = HandGestureAnimUtility.CreateClip(LeftForApply, RightForApply);
             HandGestureAnimUtility.SaveClipAsset(clip, path);
             EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<AnimationClip>(path));
         }
@@ -351,6 +423,20 @@ namespace HandGestureCreator
             if (clip == null) return;
 
             // 選択中の手 → 無ければもう片方の手 の順に探す
+            if (_target == Target.Both)
+            {
+                var l = HandGestureAnimUtility.ReadFromClip(clip, HandSide.Left, out bool fl);
+                var r = HandGestureAnimUtility.ReadFromClip(clip, HandSide.Right, out bool fr);
+                if (fl || fr)
+                {
+                    _gestureL = fl ? l : r.Clone();
+                    _gestureR = fr ? r : l.Clone();
+                    _symmetric = !(fl && fr);
+                    _loadedPath = null;
+                    ApplyPreview();
+                    return;
+                }
+            }
             var first = _target == Target.Left ? HandSide.Left : HandSide.Right;
             var g = HandGestureAnimUtility.ReadFromClip(clip, first, out bool found);
             if (!found) g = HandGestureAnimUtility.ReadFromClip(clip, first == HandSide.Left ? HandSide.Right : HandSide.Left, out found);
@@ -360,6 +446,7 @@ namespace HandGestureCreator
                 return;
             }
             _gesture = g;
+            SyncSymmetric();
             _loadedPath = null;
             ApplyPreview();
         }
@@ -374,9 +461,16 @@ namespace HandGestureCreator
         {
             var path = EditorUtility.OpenFilePanel("JSON 読み込み", "", "json");
             if (string.IsNullOrEmpty(path)) return;
-            var g = HandGesture.FromJson(File.ReadAllText(path));
-            if (g == null) return;
+            HandGesture g = null;
+            try { g = HandGesture.FromJson(File.ReadAllText(path)); }
+            catch (System.Exception e) { Debug.LogWarning($"[HandGestureCreator] JSON読み込み失敗: {e.Message}"); }
+            if (g == null)
+            {
+                EditorUtility.DisplayDialog("エラー", "ジェスチャーのJSONとして読み込めませんでした。", "OK");
+                return;
+            }
             _gesture = g;
+            SyncSymmetric();
             _loadedPath = null;
             ApplyPreview();
         }

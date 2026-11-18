@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -82,11 +83,16 @@ namespace HandGestureCreator
                 handler.GetHumanPose(ref pose);
                 if (left != null) WriteMuscles(ref pose, HandSide.Left, left);
                 if (right != null) WriteMuscles(ref pose, HandSide.Right, right);
-                // ルート位置/回転は動かさない
-                var root = animator.transform;
-                var pos = root.position; var rot = root.rotation;
+                // SetHumanPose は全身を書き換えるため、指以外のTransformは適用前の値へ戻す
+                // 適用対象の手の指以外(反対の手の指も含む)は一切動かさない
+                var fingers = new HashSet<Transform>();
+                if (left != null) fingers.UnionWith(FingerBones(animator, HandSide.Left));
+                if (right != null) fingers.UnionWith(FingerBones(animator, HandSide.Right));
+                var keep = new List<(Transform t, Vector3 p, Quaternion r, Vector3 s)>();
+                foreach (var t in animator.GetComponentsInChildren<Transform>(true))
+                    if (!fingers.Contains(t)) keep.Add((t, t.localPosition, t.localRotation, t.localScale));
                 handler.SetHumanPose(ref pose);
-                root.SetPositionAndRotation(pos, rot);
+                foreach (var (t, p, r, s) in keep) { t.localPosition = p; t.localRotation = r; t.localScale = s; }
             }
         }
 
@@ -116,6 +122,21 @@ namespace HandGestureCreator
             {
                 int idx = HandGesture.MuscleIndex(side, f, p);
                 if (idx >= 0) pose.muscles[idx] = g.Get(f, p);
+            }
+        }
+
+        /// <summary>左右の指ボーン(存在するもののみ)</summary>
+        public static IEnumerable<Transform> FingerBones(Animator a)
+            => FingerBones(a, HandSide.Left).Concat(FingerBones(a, HandSide.Right));
+
+        public static IEnumerable<Transform> FingerBones(Animator a, HandSide side)
+        {
+            var first = side == HandSide.Left ? HumanBodyBones.LeftThumbProximal : HumanBodyBones.RightThumbProximal;
+            var last = side == HandSide.Left ? HumanBodyBones.LeftLittleDistal : HumanBodyBones.RightLittleDistal;
+            for (var b = first; b <= last; b++)
+            {
+                var t = a.GetBoneTransform(b);
+                if (t != null) yield return t;
             }
         }
 

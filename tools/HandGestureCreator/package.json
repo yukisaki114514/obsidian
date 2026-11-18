@@ -1,8 +1,8 @@
 {
   "name": "com.local.vrc-hand-gesture-creator",
   "displayName": "VRC Hand Gesture Creator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "unity": "2022.3",
   "description": "Humanoidの指マッスルを編集してハンドジェスチャーを作成・保存・他アバターへ移植するエディタ拡張",
-  "author": { "name": "local" }
+  "author": { "name": "Znakisaki" }
 }
